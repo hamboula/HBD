@@ -1,70 +1,184 @@
 document.addEventListener('DOMContentLoaded', () => {
     const slides = document.querySelectorAll('.slide');
     const progressBar = document.getElementById('progress');
+
     const bgAudio = document.getElementById('bg-audio');
+    const finalAudio = document.getElementById('final-audio');
+
     let currentSlide = 0;
     let isAnimating = false;
     let audioStarted = false;
 
-    const startAudio = () => {
-        if (!audioStarted && bgAudio) {
-            bgAudio.volume = 0.4;
-            bgAudio.play().catch(e => console.log('Audio autoplay prevented', e));
+    // ==================================================
+    // AUDIO
+    // ==================================================
+
+    const playBackgroundAudio = async () => {
+        if (!bgAudio) return false;
+
+        // Already playing
+        if (!bgAudio.paused) {
             audioStarted = true;
-            // Remove listeners once audio has started
-            ['click', 'touchstart', 'wheel', 'keydown'].forEach(evt => {
-                window.removeEventListener(evt, startAudio);
-            });
+            return true;
+        }
+
+        try {
+            bgAudio.volume = 0.4;
+
+            await bgAudio.play();
+
+            // Only set this AFTER play succeeds
+            audioStarted = true;
+
+            return true;
+        } catch (error) {
+            console.log(
+                'Background audio could not start:',
+                error
+            );
+
+            return false;
         }
     };
 
-    // Attach to any interaction
-    ['click', 'touchstart', 'wheel', 'keydown'].forEach(evt => {
-        window.addEventListener(evt, startAudio, { once: true });
+    const playFinalAudio = async () => {
+        if (!finalAudio) return false;
+
+        try {
+            finalAudio.volume = 0.5;
+            finalAudio.currentTime = 0;
+
+            await finalAudio.play();
+
+            return true;
+        } catch (error) {
+            console.log(
+                'Final audio could not start:',
+                error
+            );
+
+            return false;
+        }
+    };
+
+    const stopBackgroundAudio = () => {
+        if (!bgAudio) return;
+
+        bgAudio.pause();
+    };
+
+    const stopFinalAudio = () => {
+        if (!finalAudio) return;
+
+        finalAudio.pause();
+    };
+
+    /*
+     * Try to start the background music after user
+     * interaction.
+     *
+     * We intentionally DO NOT use { once: true }.
+     * If the browser blocks audio once, another
+     * interaction can try again.
+     */
+    const startAudio = () => {
+        if (currentSlide === slides.length - 1) {
+            return;
+        }
+
+        playBackgroundAudio();
+    };
+
+    [
+        'click',
+        'touchstart',
+        'wheel',
+        'keydown'
+    ].forEach(eventName => {
+        window.addEventListener(
+            eventName,
+            startAudio,
+            {
+                passive: true
+            }
+        );
     });
 
-    // Update progress bar
+    // ==================================================
+    // PROGRESS BAR
+    // ==================================================
+
     const updateProgress = () => {
-        const progress = (currentSlide / (slides.length - 1)) * 100;
+        if (!progressBar || slides.length <= 1) {
+            return;
+        }
+
+        const progress =
+            (currentSlide / (slides.length - 1)) * 100;
+
         progressBar.style.width = `${progress}%`;
     };
 
-    // Go to specific slide
-    const goToSlide = (index) => {
-        if (isAnimating || index < 0 || index >= slides.length || index === currentSlide) return;
+    // ==================================================
+    // SLIDES
+    // ==================================================
+
+    const goToSlide = async (index) => {
+        if (
+            isAnimating ||
+            index < 0 ||
+            index >= slides.length ||
+            index === currentSlide
+        ) {
+            return;
+        }
 
         isAnimating = true;
 
-        // Remove active class from current
+        // Remove active slide
         slides[currentSlide].classList.remove('active');
 
+        // Change slide
         currentSlide = index;
 
-        // Add active class to new slide
+        // Activate new slide
         slides[currentSlide].classList.add('active');
 
         updateProgress();
 
-        // Handle audio switching
-        const finalAudio = document.getElementById('final-audio');
+        // ==================================================
+        // FINAL SLIDE
+        // ==================================================
+
         if (currentSlide === slides.length - 1) {
-            if (bgAudio) bgAudio.pause();
-            if (finalAudio) {
-                finalAudio.volume = 0.5;
-                finalAudio.currentTime = 0;
-                finalAudio.play().catch(e => console.log('Final audio prevented', e));
-            }
-        } else {
-            if (finalAudio && !finalAudio.paused) {
-                finalAudio.pause();
-                if (bgAudio && audioStarted) bgAudio.play().catch(e => console.log(e));
+            // Stop background music
+            stopBackgroundAudio();
+
+            // Play final music
+            await playFinalAudio();
+        }
+
+        // ==================================================
+        // NORMAL SLIDES
+        // ==================================================
+
+        else {
+            // Stop final music
+            stopFinalAudio();
+
+            /*
+             * Resume background music if it has already
+             * successfully started before.
+             */
+            if (audioStarted) {
+                playBackgroundAudio();
             }
         }
 
-        // Prevent rapid scrolling
+        // Small delay to prevent accidental rapid changes
         setTimeout(() => {
             isAnimating = false;
-        }, 1000); // matches CSS transition duration + buffer
+        }, 1000);
     };
 
     const nextSlide = () => {
@@ -79,68 +193,152 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    // Mouse wheel navigation
-    window.addEventListener('wheel', (e) => {
-        if (e.deltaY > 0) {
-            nextSlide();
-        } else if (e.deltaY < 0) {
-            prevSlide();
-        }
-    });
+    // ==================================================
+    // MOUSE WHEEL
+    // ==================================================
 
-    // Touch navigation for mobile
+    window.addEventListener(
+        'wheel',
+        event => {
+            if (event.deltaY > 0) {
+                nextSlide();
+            } else if (event.deltaY < 0) {
+                prevSlide();
+            }
+        },
+        {
+            passive: true
+        }
+    );
+
+    // ==================================================
+    // TOUCH / SWIPE
+    // ==================================================
+
     let touchStartY = 0;
     let touchEndY = 0;
 
-    window.addEventListener('touchstart', (e) => {
-        touchStartY = e.changedTouches[0].screenY;
-    });
+    window.addEventListener(
+        'touchstart',
+        event => {
+            touchStartY =
+                event.changedTouches[0].screenY;
+        },
+        {
+            passive: true
+        }
+    );
 
-    window.addEventListener('touchend', (e) => {
-        touchEndY = e.changedTouches[0].screenY;
-        handleTouch();
-    });
+    window.addEventListener(
+        'touchend',
+        event => {
+            touchEndY =
+                event.changedTouches[0].screenY;
+
+            handleTouch();
+        },
+        {
+            passive: true
+        }
+    );
 
     const handleTouch = () => {
         const swipeThreshold = 50;
-        if (touchStartY - touchEndY > swipeThreshold) {
+
+        const difference =
+            touchStartY - touchEndY;
+
+        if (difference > swipeThreshold) {
             nextSlide();
-        } else if (touchEndY - touchStartY > swipeThreshold) {
+        } else if (
+            difference < -swipeThreshold
+        ) {
             prevSlide();
         }
     };
 
-    // Click anywhere to go to next (except on links if any)
-    window.addEventListener('click', (e) => {
-        if (e.target.closest('a')) return;
-        // Just advance if not clicking a specific interactive element
+    // ==================================================
+    // CLICK NAVIGATION
+    // ==================================================
+
+    window.addEventListener('click', event => {
+        /*
+         * Don't navigate when clicking a link.
+         */
+        if (event.target.closest('a')) {
+            return;
+        }
+
+        /*
+         * Don't navigate when clicking mute button.
+         */
+        if (event.target.closest('#mute-btn')) {
+            return;
+        }
+
         nextSlide();
     });
 
-    // Keyboard navigation
-    window.addEventListener('keydown', (e) => {
-        if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === ' ') {
+    // ==================================================
+    // KEYBOARD
+    // ==================================================
+
+    window.addEventListener('keydown', event => {
+        if (
+            event.key === 'ArrowDown' ||
+            event.key === 'ArrowRight' ||
+            event.key === ' '
+        ) {
+            event.preventDefault();
+
             nextSlide();
-        } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+
+        } else if (
+            event.key === 'ArrowUp' ||
+            event.key === 'ArrowLeft'
+        ) {
             prevSlide();
         }
     });
 
-    // Initialize progress bar
-    updateProgress();
+    // ==================================================
+    // MUTE BUTTON
+    // ==================================================
 
-    // Mute button logic
-    const muteBtn = document.getElementById('mute-btn');
+    const muteBtn =
+        document.getElementById('mute-btn');
+
     let isMuted = false;
-    
+
     if (muteBtn) {
-        muteBtn.addEventListener('click', (e) => {
-            e.stopPropagation(); // prevent slide advancement
-            isMuted = !isMuted;
-            if (bgAudio) bgAudio.muted = isMuted;
-            const finalAudio = document.getElementById('final-audio');
-            if (finalAudio) finalAudio.muted = isMuted;
-            muteBtn.textContent = isMuted ? '🔇' : '🔊';
-        });
+        muteBtn.addEventListener(
+            'click',
+            event => {
+                /*
+                 * Prevent the click from also changing
+                 * the slide.
+                 */
+                event.stopPropagation();
+
+                isMuted = !isMuted;
+
+                if (bgAudio) {
+                    bgAudio.muted = isMuted;
+                }
+
+                if (finalAudio) {
+                    finalAudio.muted = isMuted;
+                }
+
+                muteBtn.textContent =
+                    isMuted ? '🔇' : '🔊';
+            }
+        );
     }
+
+    // ==================================================
+    // INITIALIZE
+    // ==================================================
+
+    updateProgress();
 });
