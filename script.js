@@ -4,58 +4,76 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const bgAudio = document.getElementById('bg-audio');
     const finalAudio = document.getElementById('final-audio');
+    const muteBtn = document.getElementById('mute-btn');
 
     let currentSlide = 0;
     let isAnimating = false;
-    let audioStarted = false;
+
+    // Audio state
+    let audioUnlocked = false;
+    let isMuted = false;
 
     // ==================================================
     // AUDIO
     // ==================================================
 
+    /*
+     * Try to play background music.
+     *
+     * Important:
+     * We ONLY mark audioUnlocked = true AFTER play()
+     * actually succeeds.
+     *
+     * This is important on mobile browsers because the
+     * first autoplay attempt may be rejected.
+     */
     const playBackgroundAudio = async () => {
         if (!bgAudio) return false;
 
-        // Already playing
+        // Don't restart an already playing audio element.
         if (!bgAudio.paused) {
-            audioStarted = true;
+            audioUnlocked = true;
             return true;
         }
 
         try {
             bgAudio.volume = 0.4;
+            bgAudio.muted = isMuted;
 
             await bgAudio.play();
 
-            // Only set this AFTER play succeeds
-            audioStarted = true;
-
+            audioUnlocked = true;
             return true;
         } catch (error) {
-            console.log(
-                'Background audio could not start:',
-                error
-            );
+            // Autoplay may have been blocked.
+            // DO NOT mark the audio as unlocked.
+            console.log('Background audio waiting for user interaction.');
 
             return false;
         }
     };
 
+    /*
+     * Start the final song.
+     *
+     * It uses the same audio-unlock state as the
+     * background song. This makes it much more reliable
+     * after the user has interacted with the page.
+     */
     const playFinalAudio = async () => {
         if (!finalAudio) return false;
 
         try {
             finalAudio.volume = 0.5;
+            finalAudio.muted = isMuted;
             finalAudio.currentTime = 0;
 
             await finalAudio.play();
 
+            audioUnlocked = true;
             return true;
         } catch (error) {
-            console.log(
-                'Final audio could not start:',
-                error
-            );
+            console.log('Final audio could not start yet.');
 
             return false;
         }
@@ -74,30 +92,41 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     /*
-     * Try to start the background music after user
-     * interaction.
+     * This function is called whenever the user interacts
+     * with the page.
      *
-     * We intentionally DO NOT use { once: true }.
-     * If the browser blocks audio once, another
-     * interaction can try again.
+     * We deliberately keep trying until playback succeeds.
+     * This fixes the situation where the first attempt was
+     * blocked by Chrome/Safari/mobile autoplay policy.
      */
-    const startAudio = () => {
-        if (currentSlide === slides.length - 1) {
-            return;
-        }
+    const unlockAudio = () => {
+        if (audioUnlocked) return;
 
-        playBackgroundAudio();
+        // The final slide should use finalAudio instead.
+        if (currentSlide === slides.length - 1) {
+            playFinalAudio();
+        } else {
+            playBackgroundAudio();
+        }
     };
 
+    /*
+     * User interaction events.
+     *
+     * These are intentionally NOT { once: true }.
+     * If Safari/Chrome blocks the first attempt, another
+     * interaction can try again.
+     */
     [
-        'click',
+        'pointerdown',
         'touchstart',
-        'wheel',
-        'keydown'
+        'click',
+        'keydown',
+        'wheel'
     ].forEach(eventName => {
         window.addEventListener(
             eventName,
-            startAudio,
+            unlockAudio,
             {
                 passive: true
             }
@@ -151,10 +180,15 @@ document.addEventListener('DOMContentLoaded', () => {
         // ==================================================
 
         if (currentSlide === slides.length - 1) {
-            // Stop background music
+            // Stop background song
             stopBackgroundAudio();
 
-            // Play final music
+            /*
+             * Try to start final song.
+             *
+             * If the browser allows it, it starts immediately.
+             * If not, the next user interaction will retry it.
+             */
             await playFinalAudio();
         }
 
@@ -163,19 +197,22 @@ document.addEventListener('DOMContentLoaded', () => {
         // ==================================================
 
         else {
-            // Stop final music
+            // Stop final song
             stopFinalAudio();
 
             /*
-             * Resume background music if it has already
-             * successfully started before.
+             * If audio has already been unlocked, resume it.
+             *
+             * If it hasn't been unlocked yet, don't force
+             * playback here. The next user interaction will
+             * unlock it.
              */
-            if (audioStarted) {
-                playBackgroundAudio();
+            if (audioUnlocked) {
+                await playBackgroundAudio();
             }
         }
 
-        // Small delay to prevent accidental rapid changes
+        // Small delay to prevent accidental rapid navigation
         setTimeout(() => {
             isAnimating = false;
         }, 1000);
@@ -250,9 +287,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (difference > swipeThreshold) {
             nextSlide();
-        } else if (
-            difference < -swipeThreshold
-        ) {
+        } else if (difference < -swipeThreshold) {
             prevSlide();
         }
     };
@@ -270,7 +305,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         /*
-         * Don't navigate when clicking mute button.
+         * Don't navigate when clicking the mute button.
          */
         if (event.target.closest('#mute-btn')) {
             return;
@@ -302,38 +337,52 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ==================================================
-    // MUTE BUTTON
+    // MUTE / UNMUTE
     // ==================================================
 
-    const muteBtn =
-        document.getElementById('mute-btn');
-
-    let isMuted = false;
-
     if (muteBtn) {
-        muteBtn.addEventListener(
-            'click',
-            event => {
-                /*
-                 * Prevent the click from also changing
-                 * the slide.
-                 */
-                event.stopPropagation();
+        muteBtn.addEventListener('click', async event => {
+            /*
+             * Prevent the click from also changing slides.
+             */
+            event.stopPropagation();
 
-                isMuted = !isMuted;
+            isMuted = !isMuted;
 
-                if (bgAudio) {
-                    bgAudio.muted = isMuted;
-                }
-
-                if (finalAudio) {
-                    finalAudio.muted = isMuted;
-                }
-
-                muteBtn.textContent =
-                    isMuted ? '🔇' : '🔊';
+            /*
+             * Apply mute state to BOTH songs.
+             */
+            if (bgAudio) {
+                bgAudio.muted = isMuted;
             }
-        );
+
+            if (finalAudio) {
+                finalAudio.muted = isMuted;
+            }
+
+            muteBtn.textContent =
+                isMuted ? '🔇' : '🔊';
+
+            /*
+             * IMPORTANT:
+             *
+             * If audio hasn't started yet, clicking the
+             * mute button should still attempt to start it.
+             *
+             * This means the user does NOT have to:
+             *
+             *     mute -> unmute
+             *
+             * just to get audio working.
+             */
+            if (!audioUnlocked) {
+                if (currentSlide === slides.length - 1) {
+                    await playFinalAudio();
+                } else {
+                    await playBackgroundAudio();
+                }
+            }
+        });
     }
 
     // ==================================================
@@ -341,4 +390,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // ==================================================
 
     updateProgress();
+
+    /*
+     * Try autoplay once on page load.
+     *
+     * If the browser blocks it, that's completely fine.
+     * The interaction listeners above will retry it when
+     * the user touches/clicks the page.
+     */
+    playBackgroundAudio();
 });
